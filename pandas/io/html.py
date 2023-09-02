@@ -7,6 +7,7 @@ HTML IO.
 from __future__ import annotations
 
 from collections import abc
+import copy
 import numbers
 import re
 from re import Pattern
@@ -17,6 +18,8 @@ from typing import (
 )
 import warnings
 
+from markdownify import markdownify as md
+from textacy.preprocessing.normalize import whitespace as normalize_whitespace
 from pandas._libs import lib
 from pandas.compat._optional import import_optional_dependency
 from pandas.errors import (
@@ -178,6 +181,9 @@ class _HtmlFrameParser:
 
         .. versionadded:: 1.5.0
 
+    extract_markdown : bool
+        Whether or not to extract markdown for the element.
+
     Attributes
     ----------
     io : str or file-like
@@ -202,12 +208,16 @@ class _HtmlFrameParser:
 
         .. versionadded:: 1.5.0
 
+    extract_markdown : bool
+        Whether or not to extract markdown for the element.
+
     Notes
     -----
     To subclass this class effectively you must override the following methods:
         * :func:`_build_doc`
         * :func:`_attr_getter`
         * :func:`_href_getter`
+        * :func:`_md_getter`
         * :func:`_text_getter`
         * :func:`_parse_td`
         * :func:`_parse_thead_tr`
@@ -227,6 +237,7 @@ class _HtmlFrameParser:
         encoding: str,
         displayed_only: bool,
         extract_links: Literal[None, "header", "footer", "body", "all"],
+        extract_markdown: bool,
         storage_options: StorageOptions = None,
     ) -> None:
         self.io = io
@@ -235,6 +246,7 @@ class _HtmlFrameParser:
         self.encoding = encoding
         self.displayed_only = displayed_only
         self.extract_links = extract_links
+        self.extract_markdown = extract_markdown
         self.storage_options = storage_options
 
     def parse_tables(self):
@@ -281,6 +293,22 @@ class _HtmlFrameParser:
         -------
         href : str or unicode
             The href from the <a> child of the DOM node.
+        """
+        raise AbstractMethodError(self)
+
+    def _md_getter(self, obj):
+        """
+        Return the markdown of an individual DOM node, preserving only links.
+
+        Parameters
+        ----------
+        obj : node-like
+            A DOM node.
+
+        Returns
+        -------
+        text : str or unicode
+            The markdown (with links preserved) from an individual DOM node.
         """
         raise AbstractMethodError(self)
 
@@ -481,8 +509,11 @@ class _HtmlFrameParser:
         Returns
         -------
         list of list
-            Each returned row is a list of str text, or tuple (text, link)
-            if extract_links is not None.
+            Each returned row is a list of str text. If extract_links is not None
+            and extract_markdown is None, return tuple (text, link). If extract_links
+            is None and extract_markdown is not None, return tuple (text, markdown).
+            if extract_links is not None. and extract_markdown is not None,
+            return tuple (text, link, markdown).
 
         Notes
         -----
@@ -512,10 +543,14 @@ class _HtmlFrameParser:
                     index += 1
 
                 # Append the text from this <td>, colspan times
-                text = _remove_whitespace(self._text_getter(td))
+                text = [_remove_whitespace(self._text_getter(td))]
                 if self.extract_links in ("all", section):
                     href = self._href_getter(td)
-                    text = (text, href)
+                    text.append(href)
+                if self.extract_markdown:
+                    markdown = self._md_getter(td)
+                    text.append(markdown)
+                text = tuple(text) if len(text) > 1 else text[0]
                 rowspan = int(self._attr_getter(td, "rowspan") or 1)
                 colspan = int(self._attr_getter(td, "colspan") or 1)
 
@@ -625,6 +660,17 @@ class _BeautifulSoupHtml5LibFrameParser(_HtmlFrameParser):
         a = obj.find("a", href=True)
         return None if not a else a["href"]
 
+    def _md_getter(self, obj) -> str | None:
+        obj_copy = copy.copy(obj)
+        for tag in obj_copy.find_all("sup"):
+            tag.extract()
+        for tag in obj_copy.find_all("span", {"class": "noprint"}):
+            tag.extract()
+        for tag in obj_copy.find_all(attrs={"typeof": "mw:File"}):
+            tag.extract()
+
+        return md(str(obj))
+
     def _text_getter(self, obj):
         return obj.text
 
@@ -719,6 +765,9 @@ class _LxmlFrameParser(_HtmlFrameParser):
     def _href_getter(self, obj) -> str | None:
         href = obj.xpath(".//a/@href")
         return None if not href else href[0]
+
+    def _md_getter(self, obj) -> str | None:
+        raise NotImplementedError
 
     def _text_getter(self, obj):
         return obj.text_content()
@@ -965,6 +1014,7 @@ def _parse(
     encoding,
     displayed_only,
     extract_links,
+    extract_markdown,
     storage_options,
     **kwargs,
 ):
@@ -981,6 +1031,7 @@ def _parse(
             encoding,
             displayed_only,
             extract_links,
+            extract_markdown,
             storage_options,
         )
 
@@ -1047,6 +1098,7 @@ def read_html(
     keep_default_na: bool = True,
     displayed_only: bool = True,
     extract_links: Literal[None, "header", "footer", "body", "all"] = None,
+    extract_markdown: bool,
     dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
     storage_options: StorageOptions = None,
 ) -> list[DataFrame]:
@@ -1152,6 +1204,9 @@ def read_html(
         href extracted.
 
         .. versionadded:: 1.5.0
+
+    extract_markdown : bool
+        Whether or not to extract markdown for the element.
 
     dtype_backend : {{'numpy_nullable', 'pyarrow'}}, default 'numpy_nullable'
         Back-end data type applied to the resultant :class:`DataFrame`
@@ -1259,6 +1314,7 @@ def read_html(
         keep_default_na=keep_default_na,
         displayed_only=displayed_only,
         extract_links=extract_links,
+        extract_markdown=extract_markdown,
         dtype_backend=dtype_backend,
         storage_options=storage_options,
     )
