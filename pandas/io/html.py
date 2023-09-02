@@ -669,7 +669,7 @@ class _BeautifulSoupHtml5LibFrameParser(_HtmlFrameParser):
         for tag in obj_copy.find_all(attrs={"typeof": "mw:File"}):
             tag.extract()
 
-        return md(str(obj))
+        return md(str(obj_copy))
 
     def _text_getter(self, obj):
         return obj.text
