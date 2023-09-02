@@ -1098,7 +1098,7 @@ def read_html(
     keep_default_na: bool = True,
     displayed_only: bool = True,
     extract_links: Literal[None, "header", "footer", "body", "all"] = None,
-    extract_markdown: bool,
+    extract_markdown: bool = None,
     dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
     storage_options: StorageOptions = None,
 ) -> list[DataFrame]:
